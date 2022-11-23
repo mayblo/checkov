@@ -1,6 +1,4 @@
 import os
-import shutil
-import unittest
 from contextlib import ExitStack as does_not_raise
 from pathlib import Path
 from unittest import mock
@@ -8,42 +6,12 @@ from unittest import mock
 import pytest
 
 from checkov.common.util.consts import DEFAULT_EXTERNAL_MODULES_DIR
-from checkov.terraform.module_loading.loaders.bitbucket_loader import BitbucketLoader
-from checkov.terraform.module_loading.loaders.git_loader import GenericGitLoader
-from checkov.terraform.module_loading.loaders.github_loader import GithubLoader
-from checkov.terraform.module_loading.registry import ModuleLoaderRegistry
-
-
-class TestModuleLoaderRegistry(unittest.TestCase):
-    def setUp(self) -> None:
-        self.current_dir = str(Path(__file__).parent / "tmp")
-
-    def tearDown(self) -> None:
-        if os.path.exists(self.current_dir):
-            shutil.rmtree(self.current_dir)
-
-    def test_load_terraform_registry(self):
-        registry = ModuleLoaderRegistry(True, DEFAULT_EXTERNAL_MODULES_DIR)
-        registry.root_dir = self.current_dir
-        source = "terraform-aws-modules/security-group/aws"
-        content = registry.load(current_dir=self.current_dir, source=source, source_version="~> 3.0")
-        assert content.loaded()
-        expected_content_path = os.path.join(
-            self.current_dir,
-            DEFAULT_EXTERNAL_MODULES_DIR,
-            "github.com/terraform-aws-modules/terraform-aws-security-group",
-        )
-        self.assertRegex(content.path(), f"^{expected_content_path}/v3.*")
-
-    def test_load_terraform_registry_check_cache(self):
-        registry = ModuleLoaderRegistry(download_external_modules=True)
-        registry.root_dir = self.current_dir
-        source1 = "git::https://github.com/bridgecrewio/checkov_not_working1.git"
-        registry.load(current_dir=self.current_dir, source=source1, source_version="latest")
-        self.assertIn(source1, registry.failed_urls_cache)
-        source2 = "git::https://github.com/bridgecrewio/checkov_not_working2.git"
-        registry.load(current_dir=self.current_dir, source=source2, source_version="latest")
-        self.assertIn(source1 in registry.failed_urls_cache and source2, registry.failed_urls_cache)
+from checkov.terraform.module_loading.loaders.bitbucket_loader import BitbucketLoader # noqa
+from checkov.terraform.module_loading.loaders.git_loader import GenericGitLoader # noqa
+from checkov.terraform.module_loading.loaders.github_loader import GithubLoader # noqa
+from checkov.terraform.module_loading.registry import ModuleLoaderRegistry # noqa
+from checkov.terraform.module_loading.loaders.github_access_token_loader import GithubAccessTokenLoader # noqa
+from checkov.terraform.module_loading.loaders.bitbucket_access_token_loader import BitbucketAccessTokenLoader # noqa
 
 
 @pytest.mark.parametrize(
@@ -66,13 +34,14 @@ class TestModuleLoaderRegistry(unittest.TestCase):
             "github.com/terraform-aws-modules/terraform-aws-security-group/v4.0.0",
             "git::https://github.com/terraform-aws-modules/terraform-aws-security-group?ref=v4.0.0",
             "modules/http-80",
-        ),
+        )
     ],
     ids=["module_with_version", "inner_module_with_version"],
 )
 @mock.patch("checkov.terraform.module_loading.loaders.git_loader.GitGetter", autospec=True)
 def test_load_terraform_registry(
     git_getter,
+    tmp_path: Path,
     source,
     source_version,
     expected_content_path,
@@ -82,8 +51,9 @@ def test_load_terraform_registry(
     expected_inner_module,
 ):
     # given
-    current_dir = Path(__file__).parent / "tmp"
+    current_dir = tmp_path / "tf_registry"
     registry = ModuleLoaderRegistry(download_external_modules=True)
+    registry.module_content_cache = {}
 
     # when
     content = registry.load(current_dir=str(current_dir), source=source, source_version=source_version)
@@ -93,11 +63,6 @@ def test_load_terraform_registry(
     assert content.path() == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_content_path)
 
     git_getter.assert_called_once_with(expected_git_url, mock.ANY)
-
-    git_loader = next(loader for loader in registry.loaders if isinstance(loader, GenericGitLoader))
-    assert git_loader.dest_dir == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_dest_dir)
-    assert git_loader.module_source == expected_module_source
-    assert git_loader.inner_module == expected_inner_module
 
 
 @pytest.mark.parametrize(
@@ -191,6 +156,7 @@ def test_load_terraform_registry(
 @mock.patch("checkov.terraform.module_loading.loaders.git_loader.GitGetter", autospec=True)
 def test_load_generic_git(
     git_getter,
+    tmp_path: Path,
     source,
     expected_content_path,
     expected_git_url,
@@ -199,8 +165,9 @@ def test_load_generic_git(
     expected_inner_module,
 ):
     # given
-    current_dir = Path(__file__).parent / "tmp"
+    current_dir = tmp_path / "generic"
     registry = ModuleLoaderRegistry(download_external_modules=True)
+    registry.module_content_cache = {}
 
     # when
     content = registry.load(current_dir=str(current_dir), source=source, source_version="latest")
@@ -210,11 +177,6 @@ def test_load_generic_git(
     assert content.path() == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_content_path)
 
     git_getter.assert_called_once_with(expected_git_url, mock.ANY)
-
-    git_loader = next(loader for loader in registry.loaders if isinstance(loader, GenericGitLoader))
-    assert git_loader.dest_dir == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_dest_dir)
-    assert git_loader.module_source == expected_module_source
-    assert git_loader.inner_module == expected_inner_module
 
 
 @pytest.mark.parametrize(
@@ -258,6 +220,7 @@ def test_load_generic_git(
 @mock.patch("checkov.terraform.module_loading.loaders.git_loader.GitGetter", autospec=True)
 def test_load_github(
     git_getter,
+    tmp_path: Path,
     source,
     expected_content_path,
     expected_git_url,
@@ -266,8 +229,9 @@ def test_load_github(
     expected_inner_module,
 ):
     # given
-    current_dir = Path(__file__).parent / "tmp"
+    current_dir = tmp_path / "github"
     registry = ModuleLoaderRegistry(download_external_modules=True)
+    registry.module_content_cache = {}
 
     # when
     content = registry.load(current_dir=str(current_dir), source=source, source_version="latest")
@@ -277,11 +241,6 @@ def test_load_github(
     assert content.path() == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_content_path)
 
     git_getter.assert_called_once_with(expected_git_url, mock.ANY)
-
-    git_loader = next(loader for loader in registry.loaders if isinstance(loader, GithubLoader))
-    assert git_loader.dest_dir == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_dest_dir)
-    assert git_loader.module_source == expected_module_source
-    assert git_loader.inner_module == expected_inner_module
 
 
 # TODO: create a dummy repo in bitbucket for more consitent tests
@@ -326,6 +285,7 @@ def test_load_github(
 @mock.patch("checkov.terraform.module_loading.loaders.git_loader.GitGetter", autospec=True)
 def test_load_bitbucket(
     git_getter,
+    tmp_path: Path,
     source,
     expected_content_path,
     expected_git_url,
@@ -334,8 +294,9 @@ def test_load_bitbucket(
     expected_inner_module,
 ):
     # given
-    current_dir = Path(__file__).parent / "tmp"
+    current_dir = tmp_path / "bitbucket"
     registry = ModuleLoaderRegistry(download_external_modules=True)
+    registry.module_content_cache = {}
 
     # when
     content = registry.load(current_dir=str(current_dir), source=source, source_version="latest")
@@ -345,11 +306,6 @@ def test_load_bitbucket(
     assert content.path() == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_content_path)
 
     git_getter.assert_called_once_with(expected_git_url, mock.ANY)
-
-    git_loader = next(loader for loader in registry.loaders if isinstance(loader, BitbucketLoader))
-    assert git_loader.dest_dir == str(Path(DEFAULT_EXTERNAL_MODULES_DIR) / expected_dest_dir)
-    assert git_loader.module_source == expected_module_source
-    assert git_loader.inner_module == expected_inner_module
 
 
 @pytest.mark.parametrize(
@@ -362,10 +318,11 @@ def test_load_bitbucket(
     ids=["current_dir", "parent_dir", "not_exists"],
 )
 @mock.patch("checkov.terraform.module_loading.loaders.git_loader.GitGetter", autospec=True)
-def test_load_local_path(git_getter, source, expected_content_path, expected_exception):
+def test_load_local_path(git_getter, tmp_path: Path, source, expected_content_path, expected_exception):
     # given
     current_dir = Path(__file__).parent
     registry = ModuleLoaderRegistry()
+    registry.module_content_cache = {}
 
     # when
     with expected_exception:
@@ -376,3 +333,175 @@ def test_load_local_path(git_getter, source, expected_content_path, expected_exc
         assert content.path() == str(current_dir / expected_content_path)
 
         git_getter.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "source, expected_content_path, expected_git_url, expected_dest_dir, expected_module_source, expected_inner_module",
+    [
+        (
+            "github.com/kartikp10/terraform-aws-s3-bucket1",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "git::https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1",
+            "",
+        ),
+       ( 
+            "git::https://github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "git::https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "",
+        ),
+       ( 
+           "git@github.com:kartikp10/terraform-aws-s3-bucket1.git",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "git::https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "",
+        ),
+       ( 
+           "git::ssh://git@github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "git::https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git",
+            "",
+        ),
+        (
+            "github.com/kartikp10/terraform-aws-security-group//modules/http-80",
+            "github.com/kartikp10/terraform-aws-security-group/HEAD/modules/http-80",
+            "https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-security-group",
+            "github.com/kartikp10/terraform-aws-security-group/HEAD",
+            "git::https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-security-group",
+            "modules/http-80",
+        ),
+        (
+            "git::ssh://git@github.com/kartikp10/terraform-aws-s3-bucket1.git?ref=v1.2.0",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/v1.2.0",
+            "https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git?ref=v1.2.0",
+            "github.com/kartikp10/terraform-aws-s3-bucket1/v1.2.0",
+            "git::https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-s3-bucket1.git?ref=v1.2.0",
+            "",
+        ),
+       ( 
+           "git@github.com:kartikp10/terraform-aws-security-group.git//modules/http-80",
+            "github.com/kartikp10/terraform-aws-security-group/HEAD",
+            "https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-security-group",
+            "github.com/kartikp10/terraform-aws-security-group/HEAD",
+            "git::https://x-access-token:ghp_xxxxxxxxxxxxxxxxx@github.com/kartikp10/terraform-aws-security-group",
+            "modules/http-80",
+        )
+    ],
+    ids=["github_http_module", "generic_git_module", "ssh_github_module", "generic_ssh_module","github_http_module", "generic_ssh_module_version", "github_ssh_module_version"],
+)
+@mock.patch.dict(os.environ, {"GITHUB_PAT": "ghp_xxxxxxxxxxxxxxxxx"})
+@mock.patch("checkov.terraform.module_loading.loaders.git_loader.GitGetter", autospec=True)
+def test_load_github_private(
+    git_getter,
+    tmp_path: Path,
+    source,
+    expected_content_path,
+    expected_git_url,
+    expected_dest_dir,
+    expected_module_source,
+    expected_inner_module,
+):
+    git_getter.side_effect = [Exception(), None]
+    # given
+    current_dir = tmp_path / "github_private"
+    registry = ModuleLoaderRegistry(download_external_modules=True)
+    registry.module_content_cache = {}
+
+    # when
+    registry.loaders = [GithubAccessTokenLoader()]
+    registry.load(current_dir=str(current_dir), source=source, source_version="latest")
+
+    # then
+    git_getter.assert_called_with(expected_git_url, create_clone_and_result_dirs=False)
+
+
+@pytest.mark.parametrize(
+    "source, expected_content_path, expected_git_url, expected_dest_dir, expected_module_source, expected_inner_module",
+    [
+        (
+            "bitbucket.org/kartikp10/terraform-aws-s3-bucket1",
+            "bitbucket.org/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "https://x-token-auth:xxxxxxxxxxxxxxxxx@bitbucket.org/kartikp10/terraform-aws-s3-bucket1",
+            "bitbucket.org/kartikp10/terraform-aws-s3-bucket1/HEAD",
+            "git::https://x-token-auth:xxxxxxxxxxxxxxxxx@bitbucket.org/kartikp10/terraform-aws-s3-bucket1",
+            "",
+        )
+    ],
+    ids=["module"],
+)
+@mock.patch.dict(os.environ, {"BITBUCKET_TOKEN": "xxxxxxxxxxxxxxxxx"})
+@mock.patch("checkov.terraform.module_loading.loaders.git_loader.GitGetter", autospec=True)
+def test_load_bitbucket_private(
+    git_getter,
+    tmp_path: Path,
+    source,
+    expected_content_path,
+    expected_git_url,
+    expected_dest_dir,
+    expected_module_source,
+    expected_inner_module,
+):
+    git_getter.side_effect = [Exception(), None]
+    # given
+    current_dir = tmp_path / "bitbucket_private"
+    registry = ModuleLoaderRegistry(download_external_modules=True)
+    registry.module_content_cache = {}
+
+    # when
+    registry.loaders = [BitbucketAccessTokenLoader()]
+    registry.load(current_dir=str(current_dir), source=source, source_version="latest")
+
+    # then
+    git_getter.assert_called_with(expected_git_url, create_clone_and_result_dirs=False)
+
+
+def test_load_terraform_registry_with_real_download(tmp_path: Path):
+    # given
+    current_dir = str(tmp_path / "tf_download")
+    registry = ModuleLoaderRegistry(download_external_modules=True, external_modules_folder_name=DEFAULT_EXTERNAL_MODULES_DIR)
+    registry.module_content_cache = {}
+    registry.root_dir = current_dir
+
+    source = "terraform-aws-modules/security-group/aws"
+
+    # when
+    content = registry.load(current_dir=current_dir, source=source, source_version="~> 3.0")
+
+    expected_content_path = os.path.join(
+        current_dir,
+        DEFAULT_EXTERNAL_MODULES_DIR,
+        "github.com/terraform-aws-modules/terraform-aws-security-group",
+    )
+
+    assert content.loaded()
+    assert content.path().startswith(f"{expected_content_path}/v3.")
+
+
+def test_load_terraform_registry_check_cache(tmp_path: Path):
+    # given
+    current_dir = str(tmp_path / "cache_check")
+    registry = ModuleLoaderRegistry(download_external_modules=True)
+    registry.module_content_cache = {}
+    registry.root_dir = current_dir
+
+    source1 = "git::https://github.com/bridgecrewio/checkov_not_working1.git"
+    source2 = "git::https://github.com/bridgecrewio/checkov_not_working2.git"
+
+    # when
+    registry.load(current_dir=current_dir, source=source1, source_version="latest")
+
+    assert source1 in registry.failed_urls_cache
+
+    registry.load(current_dir=current_dir, source=source2, source_version="latest")
+
+    # then
+    assert source1 in registry.failed_urls_cache
+    assert source2 in registry.failed_urls_cache
